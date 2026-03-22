@@ -32,10 +32,11 @@ export const SELECTORS = {
   MESSAGE_LINK: 'a[href*="/messaging/compose/"]',
 
   /**
-   * LOW/UNKNOWN — end-of-list sentinel LinkedIn renders when all connections are loaded.
-   * Exact selector requires live validation; used as a secondary stop signal in the
-   * scroll loop (primary stop is 2 consecutive scrolls with no new cards).
-   * Update this if LinkedIn's end-of-list element becomes identifiable.
+   * HIGH stability — exact visible text of LinkedIn's "Load more" button.
+   * The button has no data-testid, id, or aria-label — only obfuscated class names.
+   * Text content is the most stable hook available.
+   * Used in index.ts: find button by textContent === LOAD_MORE_BUTTON_TEXT, then click.
+   * Button absence signals all connections are loaded (natural loop stop condition).
    */
-  END_OF_LIST: '[data-testid="connections-empty-state"], [data-testid="end-of-results"]',
+  LOAD_MORE_BUTTON_TEXT: 'Load more',
 } as const;

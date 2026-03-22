@@ -25,16 +25,17 @@ if (!window.__liExporterLoaded) {
 
       (async () => {
         const connections = await scrollAndCollect({
-          // Parse currently visible cards on every cycle — virtual list means
-          // cards scroll out of the DOM, so we must collect incrementally.
           getCards: () => parseConnections(document),
-          scrollToBottom: () => {
-            const el = document.scrollingElement ?? document.documentElement;
-            el.scrollTop = el.scrollHeight;
+          triggerNextLoad: () => {
+            // Find "Load more" button by text content — no stable attribute exists.
+            // Button absence means all connections are loaded.
+            const btn = Array.from(document.querySelectorAll('button'))
+              .find(b => b.textContent.trim() === SELECTORS.LOAD_MORE_BUTTON_TEXT) as HTMLButtonElement | undefined;
+            if (!btn) return false;
+            btn.click();
+            return true;
           },
           wait: (ms) => new Promise((r) => setTimeout(r, ms)),
-          isEndOfList: () =>
-            document.querySelector(SELECTORS.END_OF_LIST) !== null,
           onProgress: (count) => {
             window.__liExporterProgress = count;
           },
