@@ -153,6 +153,46 @@ Open an issue with the output and I'll update the selector.
 
 ---
 
+## Human–AI collaboration
+
+This project was built entirely through conversation between a human and Claude Code (claude-sonnet-4-6). The full engineering log is in [`AI_ENGINEERING_NOTES.md`](./AI_ENGINEERING_NOTES.md). The collaboration map below summarises who did what and why that division exists.
+
+### What the human supplied
+
+**HTML fixtures** — the single most critical contribution. Both `tests/fixtures/connection-card-basic.html` and `tests/fixtures/connections-list-basic.html` were captured directly from the live LinkedIn page by the human. LinkedIn is login-gated; the AI has no browser, no account, and no way to observe the actual DOM. The fixtures are the only ground truth the AI could test against.
+
+**Live validation** — every real-world test run was performed by the human: loading the unpacked extension in Chrome, clicking Export, and reporting what happened. This is the feedback loop that discovered all the non-obvious bugs:
+- The "Receiving end does not exist" error (content script not injected into pre-existing tabs)
+- The 20 found / 10 downloaded discrepancy (virtual list recycling)
+- The fact that scrolling does nothing — LinkedIn uses a Load More button, not infinite scroll
+
+**The Load More button fixture** — after the scroll approach failed, the human captured the button's `outerHTML` directly from DevTools, which confirmed the button text is `"Load more"` and has no stable `data-testid` or `aria-label` to target.
+
+**Scope and constraints** — `CLAUDE.md` and `REVIEW.md`, which defined the architecture boundaries and done criteria, were human-authored.
+
+### What the AI supplied
+
+All TypeScript source code, tests, build config, CI workflow, and documentation. Key design contributions:
+- Isolating all LinkedIn DOM selectors in a single annotated file (`selectors.ts`) on the first draft
+- Replacing obfuscated class selectors with structural and text-pattern alternatives that survive LinkedIn deploys
+- The `Map<string, Connection>` deduplication pattern that handles virtual list recycling
+- The elapsed-counter polling pattern for the adaptive wait (makes tests deterministic without fake timers)
+- RFC 4180 CSV with formula-injection safety
+
+### Where the boundary matters
+
+The hardest constraint: **LinkedIn authentication always requires a human.** Any fixture-capture pipeline depends on a logged-in session. This is a permanent dependency that cannot be engineered around. The practical implication: when LinkedIn updates its DOM and exports break, the fix cycle is always — human captures new DOM snippet → AI updates selectors and tests.
+
+### What this shows about AI-assisted development
+
+The AI was capable of producing a correct, well-tested, production-quality Chrome extension from a spec. It did not require step-by-step instruction for implementation details. But it had a fundamental blind spot: it could not observe the system it was building for. Every real bug was discovered in the gap between the AI's model of LinkedIn's DOM and the actual DOM — and every fix required a human to close that gap with a real observation.
+
+The pattern likely generalises: AI coding assistants are highly effective for closed systems (languages, frameworks, APIs with stable specs) and require ongoing human input for open systems (live websites, external APIs, real hardware) where the ground truth can only be observed, not derived.
+
+See [`AI_ENGINEERING_NOTES.md`](./AI_ENGINEERING_NOTES.md) for the full record: what the model got right immediately, where it hallucinated or overfit, every live-validation discovery, and the reasoning behind each architectural decision.
+
+---
+
 ## License
 
 MIT
