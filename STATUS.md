@@ -11,7 +11,7 @@
 |-------|--------|
 | `npm run lint` | ✓ zero errors |
 | `npm run typecheck` | ✓ zero errors |
-| `npm test` | ✓ 25/25 pass (3 suites) |
+| `npm test` | ✓ 26/26 pass (3 suites) |
 | `npm run build` | ✓ `dist/` produced cleanly |
 
 Run all four at once: `npm run check`

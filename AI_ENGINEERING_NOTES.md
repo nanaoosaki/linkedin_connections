@@ -486,3 +486,47 @@ This was a test design bug, not a code bug. The loop implementation was correct.
 ### Remaining known limitation
 
 The `END_OF_LIST` selector in `selectors.ts` is a best-guess placeholder. If LinkedIn renders an end-of-list indicator but under a different selector, the loop will rely solely on the stable-count stop condition (2 consecutive no-growth cycles), which is still correct — it is just slightly slower to stop than if it detected the sentinel directly.
+
+---
+
+## Update — 2026-03-22: Virtual list discovery and collect-while-scroll fix
+
+### What the live test revealed
+
+First live test of the auto-scroll feature showed: progress bar reported "20 found", but the downloaded CSV contained only 10 connections. The user observed "only 2 loops of 10 connections."
+
+**Root cause: LinkedIn uses a true virtual list.**
+
+The connections list is not a simple ever-growing DOM. It is a virtualised renderer: as cards scroll out of the viewport, they are *removed* from the DOM to free memory. New cards at the bottom are added, but old cards at the top are deleted. The DOM at any moment contains only a window of currently visible cards — roughly 10–20 at a time.
+
+The first implementation scrolled to the bottom and then called `parseConnections(document)` once at the end. By that point, the top 10 connections had been recycled out of the DOM. Only the bottom 10 were still present — hence 10 in the CSV despite 20 being seen during scrolling.
+
+The "20 found" progress count was accurate at the moment it was read during the scroll loop. But the DOM had changed by the time parsing ran.
+
+### The fix: collect while scrolling
+
+`scrollUntilStable` (scroll first, parse once at the end) was replaced with `scrollAndCollect` (parse on every cycle, accumulate into a deduplicated Map).
+
+On every cycle:
+1. Parse whatever cards are currently in the DOM
+2. Add any not-yet-seen connections to a `Map<string, Connection>` keyed by `profileUrl`
+3. Scroll
+4. Repeat
+
+The stop condition is now based on **new unique connections per cycle**, not raw DOM card count. If a cycle produces 0 new unique connections, `stableChecks` increments. Two consecutive cycles with nothing new → stop.
+
+This naturally handles virtual list recycling: we capture each card while it is in the DOM window, before LinkedIn removes it.
+
+### What this means for the test suite
+
+The `ScrollDeps` interface changed: `getCardCount: () => number` was replaced with `getCards: () => Connection[]`. The stop signal is now "no new unique profileUrls" rather than "card count did not grow."
+
+A new test — `simulates virtual list` — directly models the recycling behaviour: each round returns a different DOM window of 10 cards with overlap. The test asserts that all 20 unique connections are collected despite the DOM never holding more than 10 at once.
+
+Test count: 25 → 26.
+
+### Second test bug caught
+
+The "stops immediately when isEndOfList" test initially asserted `scrollToBottom` called 1 time. The code checks `isEndOfList()` *before* `scrollToBottom()` — so when the sentinel is already present, `scrollToBottom` is called 0 times. The test expectation was wrong; the code was correct. Fixed by updating the assertion and adding a comment explaining the loop order.
+
+This is the same pattern as the previous test bug: the loop structure requires careful tracing to write correct count assertions. Inline comments explaining the cycle-by-cycle trace are now the standard for this test file.

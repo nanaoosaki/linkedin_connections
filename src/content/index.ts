@@ -1,6 +1,6 @@
 import { parseConnections } from './parser';
 import { buildCsv, downloadCsv } from '../export/csv';
-import { scrollUntilStable } from './scroll';
+import { scrollAndCollect } from './scroll';
 import { SELECTORS } from './selectors';
 
 declare global {
@@ -15,7 +15,6 @@ if (!window.__liExporterLoaded) {
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
-    // Popup polls this while the scroll loop is running
     if (msg.type === 'PROGRESS') {
       sendResponse({ count: window.__liExporterProgress ?? 0 });
       return false;
@@ -25,9 +24,10 @@ if (!window.__liExporterLoaded) {
       window.__liExporterProgress = 0;
 
       (async () => {
-        await scrollUntilStable({
-          getCardCount: () =>
-            document.querySelectorAll(SELECTORS.CARD).length,
+        const connections = await scrollAndCollect({
+          // Parse currently visible cards on every cycle — virtual list means
+          // cards scroll out of the DOM, so we must collect incrementally.
+          getCards: () => parseConnections(document),
           scrollToBottom: () => {
             const el = document.scrollingElement ?? document.documentElement;
             el.scrollTop = el.scrollHeight;
@@ -40,13 +40,12 @@ if (!window.__liExporterLoaded) {
           },
         });
 
-        const connections = parseConnections(document);
         const csv = buildCsv(connections);
         downloadCsv(csv);
         sendResponse({ count: connections.length });
       })();
 
-      return true; // keep message channel open for async response
+      return true;
     }
   });
 }

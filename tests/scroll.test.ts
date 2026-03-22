@@ -1,9 +1,20 @@
-import { scrollUntilStable, ScrollDeps } from '../src/content/scroll';
+import { scrollAndCollect, ScrollDeps } from '../src/content/scroll';
+import { Connection } from '../src/domain/connection';
+
+function makeConn(n: number): Connection {
+  return {
+    name: `Person ${n}`,
+    profileUrl: `https://www.linkedin.com/in/person-${n}/`,
+    headline: `Headline ${n}`,
+    connectedOn: 'Connected on Jan 1, 2025',
+    messageUrl: '',
+  };
+}
 
 /** Build a deps object with sensible defaults; override per test. */
 function makeDeps(overrides: Partial<ScrollDeps> = {}): ScrollDeps {
   return {
-    getCardCount:  jest.fn().mockReturnValue(0),
+    getCards:      jest.fn().mockReturnValue([]),
     scrollToBottom: jest.fn(),
     wait:          jest.fn().mockResolvedValue(undefined),
     isEndOfList:   jest.fn().mockReturnValue(false),
@@ -12,82 +23,117 @@ function makeDeps(overrides: Partial<ScrollDeps> = {}): ScrollDeps {
   };
 }
 
-describe('scrollUntilStable', () => {
+describe('scrollAndCollect', () => {
 
-  test('stops after 2 consecutive stable checks when count never grows', async () => {
-    const deps = makeDeps({ getCardCount: jest.fn().mockReturnValue(10) });
-    await scrollUntilStable(deps);
+  test('returns cards visible before first scroll even if no new cards appear', async () => {
+    const deps = makeDeps({
+      getCards: jest.fn().mockReturnValue([makeConn(1)]),
+    });
+    const result = await scrollAndCollect(deps);
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe('Person 1');
+  });
+
+  test('stops after 2 stable cycles when no new cards appear', async () => {
+    const deps = makeDeps({
+      getCards: jest.fn().mockReturnValue([makeConn(1)]), // same card every call
+    });
+    await scrollAndCollect(deps);
     expect(deps.scrollToBottom).toHaveBeenCalledTimes(2);
   });
 
-  test('resets stable counter when cards grow, then stops once growth plateaus', async () => {
-    // getCardCount is called TWICE per iteration (before + after).
-    // Growth is only visible when the count changes between those two calls.
-    // counts: before1=10, after1=20 → growth (stable=0)
-    //         before2=20, after2=20 → stable=1
-    //         before3=20, after3=20 → stable=2 → stop
-    const counts = [10, 20, 20, 20, 20];
+  test('collects cards across cycles — deduplicates by profileUrl', async () => {
+    // Cycle 0 (pre-scroll): cards 1-2
+    // Cycle 1: cards 2-3  (card 2 is a duplicate)
+    // Cycle 2: cards 3    (no new)
+    // Cycle 3: cards 3    (no new) → stop
+    const rounds = [
+      [makeConn(1), makeConn(2)],
+      [makeConn(2), makeConn(3)],
+      [makeConn(3)],
+      [makeConn(3)],
+    ];
     let i = 0;
     const deps = makeDeps({
-      getCardCount: jest.fn(() => counts[Math.min(i++, counts.length - 1)]),
+      getCards: jest.fn(() => rounds[Math.min(i++, rounds.length - 1)]),
     });
-    await scrollUntilStable(deps);
+    const result = await scrollAndCollect(deps);
+    expect(result).toHaveLength(3);
+    expect(result.map(c => c.name)).toEqual(
+      expect.arrayContaining(['Person 1', 'Person 2', 'Person 3'])
+    );
+  });
+
+  test('resets stable counter when new cards are found', async () => {
+    // Pre-scroll: [1], scroll1: [2] (new→reset), scroll2: [2] (none), scroll3: [2] (none→stop)
+    const rounds = [[makeConn(1)], [makeConn(2)], [makeConn(2)], [makeConn(2)]];
+    let i = 0;
+    const deps = makeDeps({
+      getCards: jest.fn(() => rounds[Math.min(i++, rounds.length - 1)]),
+    });
+    await scrollAndCollect(deps);
     expect(deps.scrollToBottom).toHaveBeenCalledTimes(3);
   });
 
-  test('stops immediately when isEndOfList returns true', async () => {
+  test('stops immediately when isEndOfList returns true — skips scroll', async () => {
+    // isEndOfList is checked before scrollToBottom, so the loop breaks
+    // without scrolling when the end-of-list sentinel is already present.
     const deps = makeDeps({
-      getCardCount:  jest.fn().mockReturnValue(40),
-      isEndOfList:   jest.fn().mockReturnValue(true),
+      getCards:    jest.fn().mockReturnValue([makeConn(1)]),
+      isEndOfList: jest.fn().mockReturnValue(true),
     });
-    await scrollUntilStable(deps);
-    expect(deps.scrollToBottom).toHaveBeenCalledTimes(1);
+    await scrollAndCollect(deps);
+    expect(deps.scrollToBottom).toHaveBeenCalledTimes(0);
   });
 
-  test('calls onProgress after every scroll+wait cycle', async () => {
-    const counts = [5, 5, 5]; // stops after 2 stable checks
+  test('calls onProgress with cumulative count after each cycle', async () => {
+    // Pre-scroll: [1] → progress(1)
+    // Scroll 1: [2] → progress(2)
+    // Scroll 2: []  → progress(2), stableChecks=1
+    // Scroll 3: []  → progress(2), stableChecks=2 → stop
+    const rounds = [[makeConn(1)], [makeConn(2)], [], []];
     let i = 0;
     const deps = makeDeps({
-      getCardCount: jest.fn(() => counts[Math.min(i++, counts.length - 1)]),
+      getCards: jest.fn(() => rounds[Math.min(i++, rounds.length - 1)]),
     });
-    await scrollUntilStable(deps);
-    expect(deps.onProgress).toHaveBeenCalledTimes(2);
-    expect(deps.onProgress).toHaveBeenCalledWith(5);
+    await scrollAndCollect(deps);
+    expect(deps.onProgress).toHaveBeenNthCalledWith(1, 1); // pre-scroll
+    expect(deps.onProgress).toHaveBeenNthCalledWith(2, 2); // after scroll 1
+    expect(deps.onProgress).toHaveBeenNthCalledWith(3, 2); // after scroll 2
   });
 
-  test('calls wait once per scroll cycle', async () => {
-    const deps = makeDeps({ getCardCount: jest.fn().mockReturnValue(0) });
-    await scrollUntilStable(deps);
+  test('calls wait with 900ms on every scroll cycle', async () => {
+    const deps = makeDeps({ getCards: jest.fn().mockReturnValue([]) });
+    await scrollAndCollect(deps);
     expect(deps.wait).toHaveBeenCalledTimes(2);
     expect(deps.wait).toHaveBeenCalledWith(900);
   });
 
-  test('returns final card count', async () => {
-    const deps = makeDeps({ getCardCount: jest.fn().mockReturnValue(137) });
-    const result = await scrollUntilStable(deps);
-    expect(result).toBe(137);
+  test('handles empty page gracefully', async () => {
+    const deps = makeDeps({ getCards: jest.fn().mockReturnValue([]) });
+    const result = await scrollAndCollect(deps);
+    expect(result).toHaveLength(0);
   });
 
-  test('handles zero cards gracefully — stops after 2 stable checks', async () => {
-    const deps = makeDeps({ getCardCount: jest.fn().mockReturnValue(0) });
-    const result = await scrollUntilStable(deps);
-    expect(result).toBe(0);
-    expect(deps.scrollToBottom).toHaveBeenCalledTimes(2);
-  });
-
-  test('continuously growing list keeps scrolling until stable', async () => {
-    // Two growth events (each resets the stable counter), then plateau.
-    // before1=10, after1=20 → growth (stable=0)
-    // before2=20, after2=30 → growth (stable=0)
-    // before3=30, after3=30 → stable=1
-    // before4=30, after4=30 → stable=2 → stop
-    const counts = [10, 20, 20, 30, 30, 30, 30];
+  test('simulates virtual list — collects all cards even when old ones leave the DOM', async () => {
+    // Each round represents the current DOM window (old cards removed, new cards added)
+    // Round 0 (pre-scroll): connections 1-10
+    // Round 1: connections 6-15 (5 recycled, 5 new)
+    // Round 2: connections 11-20 (5 more recycled, 5 new)
+    // Round 3: connections 16-20 (no new vs round 2) → stableChecks=1
+    // Round 4: connections 16-20 (no new)             → stableChecks=2 → stop
+    const window1  = Array.from({ length: 10 }, (_, i) => makeConn(i + 1));
+    const window2  = Array.from({ length: 10 }, (_, i) => makeConn(i + 6));
+    const window3  = Array.from({ length: 10 }, (_, i) => makeConn(i + 11));
+    const window4  = Array.from({ length: 5  }, (_, i) => makeConn(i + 16));
+    const rounds   = [window1, window2, window3, window4, window4];
     let i = 0;
     const deps = makeDeps({
-      getCardCount: jest.fn(() => counts[Math.min(i++, counts.length - 1)]),
+      getCards: jest.fn(() => rounds[Math.min(i++, rounds.length - 1)]),
     });
-    await scrollUntilStable(deps);
-    expect(deps.scrollToBottom).toHaveBeenCalledTimes(4);
+    const result = await scrollAndCollect(deps);
+    // Should have collected all 20 unique connections despite virtual recycling
+    expect(result).toHaveLength(20);
   });
 
 });
