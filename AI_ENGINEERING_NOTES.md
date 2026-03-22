@@ -679,3 +679,37 @@ The CSV download is already usable. Anyone can import it into any database or CR
 **Risk:** Google may reject on first submission if the permissions justification is not detailed enough. This is common and fixable — rejection comes with specific feedback.
 
 **Scope note:** publication does not change any code. It is purely a packaging and submission task. The extension as built is already MV3-compliant and uses minimal permissions.
+
+---
+
+## Iteration 3 update — 2026-03-22
+
+### Iteration 3: Adaptive wait + time estimation in progress bar
+
+**Motivation.** The v2.2 implementation used a fixed 1200ms wait after each "Load more" click. This was arbitrary — a round number large enough to usually work, but wasteful when cards render faster. For 535 connections (~50+ click cycles), the extra wait time accumulates significantly. The human asked for a progress bar with a time-remaining estimate, which required both a more precise timing model and surfacing the total connection count.
+
+**Design decisions.**
+
+*Adaptive wait:* Replace the fixed wait with a polling loop that samples `getRenderedCardCount()` every 150ms and breaks as soon as the DOM count changes. A 2000ms ceiling prevents hanging indefinitely if the page is slow or the click has no effect. Random jitter (100–300ms) is added after the polling loop to avoid a mechanically regular click pattern. This is not strictly necessary for correctness, but it is good practice for browser automation against a real service.
+
+*Time estimation:* Rate-based projection — `rate = found / elapsedMs` (connections per ms) — extrapolated forward when the total connection count is known. The total is read from a `CONNECTIONS_TOTAL` selector (best-guess: `[data-testid="connections-count"]` or `.mn-connections__header h1`). If the selector finds nothing, the bar stays indeterminate and no ETA is shown. This graceful null path means the feature degrades cleanly if LinkedIn changes the total-count element's markup.
+
+*Determinate vs indeterminate bar:* When total is known, `progressEl.max = total` and `progressEl.value = found` make the bar fill proportionally (`X / total` text). When unknown, the `value` attribute is removed and the bar animates with the browser's default indeterminate style.
+
+**`ProgressInfo` interface.** `onProgress` previously received a bare number (connection count). It now receives `{ found, total, elapsedMs, remainingMs }`. This gives the popup everything it needs for both text status and ETA, and keeps the scroll module testable in isolation — the popup is fully decoupled from the timing logic.
+
+**`ScrollConfig` for testability.** Hardcoded timing constants (150ms poll interval, 2000ms max wait, jitter range) are now injectable via `ScrollConfig`. Tests use `FAST` config (`pollIntervalMs: 1, maxWaitMs: 1, jitterBaseMs: 0, jitterRangeMs: 1`) to eliminate real delays. The adaptive inner loop is also short-circuited in tests by a `makeDomCounter()` mock that alternates its return value — the loop sees `rawBefore !== current` on the first poll and breaks immediately. This avoids any real delay without mocking `setTimeout` or using fake timers.
+
+**What the AI got right first time:**
+- The elapsed-counter pattern (`waited += POLL_INTERVAL_MS`) for the inner loop, rather than `Date.now()` checks — the former works without real time passing, making tests trivially fast.
+- The graceful null fallback for `CONNECTIONS_TOTAL` (returns indeterminate rather than throwing).
+- The `makeDomCounter` alternating mock pattern.
+
+**What required care:**
+- The `CONNECTIONS_TOTAL` selector is still a best-guess — not live-validated. It is the only piece of the system that has not been confirmed against the real LinkedIn page. The graceful null fallback means this is low-risk at runtime, but a future live validation pass should confirm or update the selector.
+- Test assertions on `onProgress` calls had to be written carefully because `elapsedMs` is wall-clock-dependent and not deterministic in tests. `toMatchObject` (partial match) was used instead of deep equality to avoid brittle assertions.
+
+**Test changes.** `tests/scroll.test.ts` was fully rewritten: 10 tests → 11 tests, new `makeDeps` includes `getRenderedCardCount` and `getTotalCount`, `onProgress` assertions check `ProgressInfo` fields rather than raw numbers, all tests pass the `FAST` config. Total test count: 27 → 28.
+
+**Human input in this iteration:** Direction and requirements came entirely from the human ("add time estimation to the progress bar"). Code and architecture were AI-generated. No new fixtures were needed — the adaptive wait and ProgressInfo logic are fully exercisable with the existing mock infrastructure.
+

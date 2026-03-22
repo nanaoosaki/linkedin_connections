@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-03-22 (v2 — full export via Load More loop, live validated)
+**Last updated:** 2026-03-22 (v3 — adaptive wait + time estimation, 28 tests)
 **Extension:** LinkedIn Connections Exporter (Manifest V3, TypeScript)
 
 ---
@@ -11,7 +11,7 @@
 |-------|--------|
 | `npm run lint` | ✓ zero errors |
 | `npm run typecheck` | ✓ zero errors |
-| `npm test` | ✓ 27/27 pass (3 suites) |
+| `npm test` | ✓ 28/28 pass (3 suites) |
 | `npm run build` | ✓ `dist/` produced cleanly |
 
 Run all four at once: `npm run check`
@@ -37,12 +37,12 @@ Run all four at once: `npm run check`
 | `src/content/scroll.ts` | `scrollAndCollect()` — Load More loop with injectable deps, fully unit-tested |
 | `src/content/index.ts` | Content script — wires real deps, handles EXPORT + PROGRESS messages |
 | `src/export/csv.ts` | RFC 4180 CSV builder with formula-injection safety |
-| `src/popup/index.ts` | Popup — injects script, polls progress, shows live count, disables button during run |
-| `popup.html` | Export button + indeterminate progress bar |
+| `src/popup/index.ts` | Popup — injects script, polls progress, determinate/indeterminate bar, time-remaining estimate |
+| `popup.html` | Export button + progress bar + ETA line (`#eta`) |
 | `manifest.json` | MV3, minimal permissions (`activeTab`, `scripting`) |
 | `tests/csv.test.ts` | 5 tests: header, quoting, formula-injection |
 | `tests/parser.test.ts` | 12 fixture-based tests: exact values + invariants across all cards |
-| `tests/scroll.test.ts` | 10 tests: Load More loop logic, dedup, virtual list simulation |
+| `tests/scroll.test.ts` | 11 tests: Load More loop, adaptive wait, dedup, ProgressInfo, virtual list simulation |
 | `tests/fixtures/connection-card-basic.html` | Single card in correct lazy-column ancestry |
 | `tests/fixtures/connections-list-basic.html` | Real multi-card list — parser regression fixture |
 | `tests/fixtures/connections-load-more-button.html` | Load More button outerHTML — selector reference |
@@ -65,10 +65,25 @@ Run all four at once: `npm run check`
 | v2.0 | 2026-03-22 | Auto-scroll loop + progress indicator (scroll approach — pre-discovery) |
 | v2.1 | 2026-03-22 | Virtual list fix: collect-while-scrolling with Map deduplication |
 | v2.2 | 2026-03-22 | **Load More button click loop** — scroll was wrong mechanism entirely; 27 tests; 535 connections validated |
+| v3.0 | 2026-03-22 | **Adaptive wait + time estimation** — replaces fixed 1200ms wait; `ProgressInfo` with ETA; 28 tests |
 
 ---
 
-## What changed in v2.2 (current)
+## What changed in v3.0 (current)
+
+**Adaptive wait replaces fixed 1200ms delay.** The inner polling loop (150ms interval, 2000ms ceiling) watches `getRenderedCardCount()` and proceeds as soon as new DOM cards appear, rather than waiting a fixed duration. Random jitter (100–300ms) is added after each click so the click pattern is not mechanically regular.
+
+**Time estimation added to progress bar.** When LinkedIn's total count element is found, the popup shows a determinate progress bar (`X / total`) and a projected time-remaining line (`~Nm Ns remaining`). When total is unavailable, the bar remains indeterminate and no ETA is shown.
+
+**`ProgressInfo` replaces bare count.** `onProgress` now receives `{ found, total, elapsedMs, remainingMs }`. The PROGRESS poll in the popup reads all four fields and renders accordingly.
+
+**`ScrollConfig` interface** allows timing constants (`pollIntervalMs`, `maxWaitMs`, `jitterBaseMs`, `jitterRangeMs`, `stableThreshold`) to be injected. Tests use `FAST` config (1ms intervals) and an alternating `makeDomCounter()` mock so the adaptive inner loop exits on the first poll — no real timeouts needed.
+
+**`popup.html`** gained an `#eta` div for the time-remaining line; popup width increased to 260px.
+
+---
+
+## What changed in v2.2
 
 **Root cause discovered through live testing:** LinkedIn's connections page uses a **"Load more" button**, not infinite scroll. Programmatic scrolling (`scrollTop = scrollHeight`) had no effect on card loading regardless of which scroll container was targeted. The `<main id="workspace">` element is the page scroll container but clicking the Load More button is the only mechanism that loads new cards.
 
@@ -90,7 +105,7 @@ Run all four at once: `npm run check`
 |-----------|----------|-------|
 | `PROFILE_TEXT_LINK` uses `:not([style])` | Medium | If LinkedIn adds inline style to the text anchor, name/headline silently breaks |
 | `LOAD_MORE_BUTTON_TEXT` matched by text content | Medium | If LinkedIn translates or renames the button, loop stops immediately with 0 new loads |
-| 1200ms wait hardcoded | Low | Slow connections may need longer; fast connections waste time |
+| `CONNECTIONS_TOTAL` selector needs live validation | Medium | Best-guess selector — returns null gracefully if not found; shows indeterminate bar |
 | No test for missing headline or messageUrl | Low | Empty-field degradation path implemented but not explicitly tested |
 | `ts-jest` deprecation warning | Low | Cosmetic; does not affect correctness |
 

@@ -32,6 +32,14 @@ export const SELECTORS = {
   MESSAGE_LINK: 'a[href*="/messaging/compose/"]',
 
   /**
+   * LOW/UNKNOWN — element containing the total connections count (e.g. "535 connections").
+   * Requires live validation; null returned gracefully if not found.
+   * Used to show "120 / 535" and a time-remaining estimate in the popup.
+   * Update this selector after inspecting the live page heading area.
+   */
+  CONNECTIONS_TOTAL: '[data-testid="connections-count"], .mn-connections__header h1',
+
+  /**
    * HIGH stability — exact visible text of LinkedIn's "Load more" button.
    * The button has no data-testid, id, or aria-label — only obfuscated class names.
    * Text content is the most stable hook available.
