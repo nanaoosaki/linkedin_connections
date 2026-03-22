@@ -342,3 +342,85 @@ Any operation that might be called multiple times — injection, registration, i
 ### 5. The gap between "it works on my machine in the right order" and "it works reliably"
 
 This extension worked correctly when the user followed the exact steps in the manual: build → load → navigate → export. The failure only appeared when the page was already open — a one-step deviation from the documented workflow. This gap between "works in documented order" and "works reliably in realistic use" is a common source of production bugs. Any time a design requires the user to follow a specific sequence of steps to avoid an error, treat that as a code smell and consider whether the sequence can be enforced in code instead.
+
+---
+
+## Update — 2026-03-22: Full-list export — design decision record
+
+### The problem
+
+The v1 extension only exports connections that are currently rendered in the DOM. LinkedIn renders its connections list as a virtual/lazy column — cards are injected as the user scrolls. A user with 500 connections would need to scroll ~25 times before clicking Export. A user with 2000 connections would need to scroll ~100 times. This is not a viable workflow.
+
+### Options considered
+
+**Option 1 — Auto-scroll loop in the content script.**
+The content script scrolls the page programmatically in a loop, waits for LinkedIn to render each new batch, checks whether the card count has grown, and repeats until the count stabilises. Then it parses and exports everything. A progress indicator in the popup shows the user how many connections have been loaded so far.
+
+**Option 2 — LinkedIn's internal Voyager API.**
+LinkedIn's page fetches connections from an internal undocumented REST/GraphQL endpoint (`/voyager/api/relationships/dash/connections`). The content script could replicate these paginated requests directly, parsing JSON rather than DOM. Auth cookies and CSRF tokens are already present in the browser session so no additional login is required.
+
+**Option 3 — Manual scroll with live card count.**
+Keep the manual scroll requirement but show the current DOM card count in the popup before export, so the user knows exactly how many connections they are about to export. Zero code complexity, no reliability risk, but still requires manual scrolling.
+
+### Why Option 2 was ruled out
+
+Option 2 is fast and technically achievable. It was rejected for the following reasons:
+
+**Terms of Service.** LinkedIn's User Agreement explicitly prohibits automated data collection and scraping. Reading the visible DOM of a page the user is actively viewing occupies a legal and ethical grey area that most browser extensions operate in. Making direct API calls in a loop is unambiguously automated extraction, regardless of whether the user is logged in.
+
+**Account risk.** LinkedIn actively rate-limits and flags automated API traffic. The risk for occasional personal use is low, but it is non-zero. A personal-use tool should not put the user's professional LinkedIn account at risk.
+
+**Silent failure mode.** DOM-based extraction fails visibly — 0 results, wrong names, broken CSV. API-based extraction fails silently — a changed response schema produces malformed output with no obvious signal to the user. Silent failures are worse than loud ones.
+
+**Maintenance burden.** The Voyager API is undocumented, unversioned, and changes without notice. Required request headers rotate. Pagination semantics shift. Every change requires reverse-engineering. The DOM also changes, but selector updates are localised and well-understood. API reverse-engineering is open-ended.
+
+### Why Option 1 was chosen
+
+Auto-scroll mirrors exactly what a human user does when they want to see all their connections. It is slow — roughly 30–60 seconds for 1000 connections depending on LinkedIn's render latency per batch — but it is unattended. The user clicks once and the extension does the scrolling. The progress indicator makes the wait tolerable by showing forward movement.
+
+It requires no new permissions beyond what v1 already uses. It introduces no API fragility. It carries no ToS or account risk beyond what already exists for the v1 DOM reading.
+
+The one genuine risk is that LinkedIn could detect the scroll pattern as non-human and throttle it. The mitigation is to scroll at a human-plausible pace (one scroll per ~800–1000ms) rather than as fast as possible.
+
+### Chosen design: auto-scroll with progress indicator
+
+**Scroll strategy:**
+- Scroll to the bottom of the page in increments
+- After each scroll, wait ~800ms for LinkedIn to render the next batch
+- Compare card count before and after the wait
+- If count grew: scroll again
+- If count did not grow after 2 consecutive checks: assume end of list reached
+- Then parse all cards and export
+
+**Stop condition:**
+Two consecutive scrolls with no new cards is the primary stop signal. LinkedIn also renders a visual end-of-list indicator ("You've reached the end of your connections") — querying for this element can serve as a secondary confirmation.
+
+**Progress indicator:**
+The popup UI needs to move beyond a simple button + status line. During a scroll run it should show:
+- A progress message: `Loading connections... 120 found`
+- The Export button should be disabled while scrolling is in progress
+- On completion: `Exported 487 connection(s).`
+- On error: a clear message with a suggestion
+
+**Async message flow:**
+The current popup sends one message and awaits one response. The scroll loop changes this: the content script needs to run for potentially 30–60 seconds, during which the popup should reflect live progress. Options:
+1. Single message, long-running response — simplest, but the popup shows no progress until the entire scroll completes
+2. Repeated polling messages from popup to content script — popup asks "how many so far?" on an interval
+3. Content script sends progress updates back to popup — requires the popup to stay open and listen, which it does as long as it's in focus
+
+Option 2 (polling) is the most straightforward to implement without restructuring the message architecture. The popup sends `{ type: 'EXPORT' }`, the content script starts scrolling, and the popup polls `{ type: 'PROGRESS' }` every second until it receives the final count.
+
+### What needs to change in v2
+
+| Component | Change |
+|-----------|--------|
+| `src/content/index.ts` | Add scroll loop logic; handle `PROGRESS` message type |
+| `src/popup/index.ts` | Add polling loop; update UI during scroll |
+| `popup.html` | Add progress display element; disable button during export |
+| `tests/` | Scroll logic is hard to unit-test against fixtures; integration test notes needed |
+| `TESTING.md` | Add manual test steps for one-click full export |
+| `STATUS.md` | Update after implementation |
+
+### What does not change
+
+The parser, selectors, CSV exporter, and domain model are unchanged. The scroll loop is purely an orchestration concern layered on top of the existing extraction logic. This is a validation that the v1 architecture separated concerns correctly.
