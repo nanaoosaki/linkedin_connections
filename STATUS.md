@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-03-22
+**Last updated:** 2026-03-22 (v2 auto-scroll)
 **Extension:** LinkedIn Connections Exporter (Manifest V3, TypeScript)
 
 ---
@@ -11,7 +11,7 @@
 |-------|--------|
 | `npm run lint` | ✓ zero errors |
 | `npm run typecheck` | ✓ zero errors |
-| `npm test` | ✓ 17/17 pass (2 suites) |
+| `npm test` | ✓ 25/25 pass (3 suites) |
 | `npm run build` | ✓ `dist/` produced cleanly |
 
 Run all four at once: `npm run check`
@@ -22,6 +22,7 @@ Run all four at once: `npm run check`
 
 | Artifact | Purpose |
 |----------|---------|
+| `src/content/scroll.ts` | Auto-scroll loop with injectable deps — fully unit-tested |
 | `src/domain/connection.ts` | `Connection` interface — single schema definition |
 | `src/content/selectors.ts` | All LinkedIn DOM selectors in one file; zero obfuscated class names |
 | `src/content/parser.ts` | Extracts cards using structural and text-pattern selectors |
@@ -51,6 +52,14 @@ Initial attempt produced `"Could not establish connection. Receiving end does no
 ---
 
 ## What changed in the latest iteration
+
+**Auto-scroll with progress indicator (2026-03-22 v2)**
+
+One-click full export. The content script now scrolls the page to the bottom incrementally, waits 900ms per cycle for LinkedIn to render new cards, and repeats until the card count is stable for 2 consecutive cycles. The popup shows a live count (`Loading connections… N found`) via 800ms polling, an indeterminate progress bar, and a disabled Export button during the run.
+
+The scroll loop lives in `src/content/scroll.ts` with all browser side-effects injected as dependencies, enabling full unit test coverage without a browser. 8 new tests added; test count 17 → 25.
+
+The `END_OF_LIST` selector in `selectors.ts` is a placeholder pending live validation — the stable-count stop condition works correctly without it.
 
 **Robust injection (2026-03-22)**
 
@@ -98,8 +107,10 @@ Test count: **10 → 17**
 
 ## Next recommended steps
 
-- Rebuild (`npm run build`), reload the extension, and re-test with the injection fix to confirm Export works without needing to refresh the page first
-- Test with a larger scroll (50+ connections) to validate lazy-list behaviour at scale
+- `npm run build` → reload extension in Chrome → test auto-scroll on live connections page
+- Confirm scroll triggers LinkedIn's lazy renderer (900ms wait may need tuning)
+- Identify LinkedIn's end-of-list DOM element and update `SELECTORS.END_OF_LIST`
+- Test with a large list (100+ connections) to validate stop condition and timing
 
 ---
 

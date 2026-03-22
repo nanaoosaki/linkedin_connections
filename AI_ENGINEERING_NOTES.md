@@ -424,3 +424,65 @@ Option 2 (polling) is the most straightforward to implement without restructurin
 ### What does not change
 
 The parser, selectors, CSV exporter, and domain model are unchanged. The scroll loop is purely an orchestration concern layered on top of the existing extraction logic. This is a validation that the v1 architecture separated concerns correctly.
+
+---
+
+## Update — 2026-03-22: Auto-scroll implementation (v2)
+
+### What was built
+
+**`src/content/scroll.ts`** — a new module containing `scrollUntilStable`, the entire scroll loop as a pure orchestration function. All side-effectful operations are injected as dependencies (`getCardCount`, `scrollToBottom`, `wait`, `isEndOfList`, `onProgress`). This makes the loop fully unit-testable without a browser.
+
+**`src/content/index.ts`** — updated to call `scrollUntilStable` before parsing. The `PROGRESS` message type was added so the popup can poll for a live count while the loop runs. A `window.__liExporterProgress` value is updated on each cycle and read by the PROGRESS handler.
+
+**`src/popup/index.ts`** — updated to poll for progress every 800ms using `setInterval`, display the running count, disable the Export button during the run, and show an indeterminate `<progress>` bar. The poll timer is cleared when the EXPORT response arrives.
+
+**`popup.html`** — added a `<progress>` element and a `button:disabled` style.
+
+**`src/content/selectors.ts`** — added `END_OF_LIST` selector as a secondary stop signal. Marked LOW/UNKNOWN stability since the exact selector requires live validation.
+
+**`tests/scroll.test.ts`** — 8 new unit tests covering: 2-stable-check stop, stable-counter reset on growth, immediate stop on end-of-list, `onProgress` call count, `wait` call count and argument, return value, zero-card graceful handling, and multi-growth plateau detection.
+
+Test count: **17 → 25** (all pass).
+
+### Testing design decision: why dependency injection
+
+The scroll loop is fundamentally about time and DOM mutation — it waits for LinkedIn to render cards after each scroll. Neither of these can be meaningfully exercised in JSDOM:
+- JSDOM has no scroll behaviour
+- JSDOM does not simulate LinkedIn's lazy renderer
+- Real timers would make tests 30–60 seconds long
+
+The solution is to extract all side effects behind an interface (`ScrollDeps`) and inject them. Tests pass mock implementations: `wait` resolves immediately, `getCardCount` returns values from a pre-defined sequence, `scrollToBottom` is a no-op spy. The test runs in milliseconds and exercises every code path.
+
+The real implementations are two-liners wired in `index.ts`:
+```typescript
+scrollToBottom: () => { const el = document.scrollingElement ?? document.documentElement; el.scrollTop = el.scrollHeight; },
+wait: (ms) => new Promise((r) => setTimeout(r, ms)),
+```
+
+This is the **dependency injection for testability** pattern. It costs one extra function signature but enables complete unit test coverage of logic that would otherwise be untestable without a browser.
+
+### A subtle bug discovered during testing
+
+The first draft of the scroll test contained this reasoning:
+```
+// Scroll 1: before=10 after=10 → stableChecks=1
+// Scroll 2: before=10 after=20 → growth, stableChecks=0  ← WRONG
+```
+
+The error: `before` at the start of each iteration is a fresh call to `getCardCount()`. By the time iteration 2 runs, the mock has already advanced past the "10" values. So `before` in iteration 2 reads the new grown count (20), and `after` also reads 20 — no growth visible, stable check increments immediately.
+
+**What this reveals:** `before` and `after` in the same iteration are the only two points where growth is observable. If the count grows *between* iterations (i.e., between the `after` of one iteration and the `before` of the next), the loop does not detect it. For the real LinkedIn page this is not a problem — LinkedIn's renderer adds cards after a scroll event, not spontaneously between polls. But it means the mock must simulate growth *within* a single before/after pair to test the reset behaviour.
+
+This was a test design bug, not a code bug. The loop implementation was correct. The fix was to revise the mock sequences so growth is visible within an iteration.
+
+### What requires live validation
+
+- Whether `document.scrollingElement.scrollTop = scrollHeight` triggers LinkedIn's lazy renderer in practice
+- The actual scroll wait time needed (900ms is a conservative estimate; may need tuning)
+- What LinkedIn's end-of-list DOM looks like (the `END_OF_LIST` selector is a placeholder)
+- Whether the PROGRESS polling interacts correctly with the EXPORT channel in a real Chrome tab
+
+### Remaining known limitation
+
+The `END_OF_LIST` selector in `selectors.ts` is a best-guess placeholder. If LinkedIn renders an end-of-list indicator but under a different selector, the loop will rely solely on the stable-count stop condition (2 consecutive no-growth cycles), which is still correct — it is just slightly slower to stop than if it detected the sentinel directly.

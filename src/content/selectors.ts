@@ -2,9 +2,9 @@
  * All LinkedIn DOM selectors in one place.
  *
  * Selector stability notes:
- *   HIGH stability  — structural attributes LinkedIn ships for accessibility/testing
+ *   HIGH stability   — structural attributes LinkedIn ships for accessibility/testing
  *   MEDIUM stability — href patterns tied to URL scheme, unlikely to change
- *   LOW stability   — obfuscated class names (change on each LinkedIn deploy)
+ *   LOW stability    — obfuscated class names (change on each LinkedIn deploy)
  *
  * This module intentionally contains NO obfuscated class names.
  * Name, headline, and connected-date are extracted by structure and text pattern
@@ -30,4 +30,12 @@ export const SELECTORS = {
 
   /** MEDIUM — compose message deep-link */
   MESSAGE_LINK: 'a[href*="/messaging/compose/"]',
+
+  /**
+   * LOW/UNKNOWN — end-of-list sentinel LinkedIn renders when all connections are loaded.
+   * Exact selector requires live validation; used as a secondary stop signal in the
+   * scroll loop (primary stop is 2 consecutive scrolls with no new cards).
+   * Update this if LinkedIn's end-of-list element becomes identifiable.
+   */
+  END_OF_LIST: '[data-testid="connections-empty-state"], [data-testid="end-of-results"]',
 } as const;
