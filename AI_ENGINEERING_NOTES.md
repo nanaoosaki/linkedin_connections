@@ -594,3 +594,88 @@ This is a specific instance of the broader principle: **fixtures and mocks valid
 For any feature that depends on how an external page behaves (loading mechanism, scroll container, authentication flow), the first step is always manual observation in the real environment. Write down what you see. Then design the code to match what actually happens, not what you assume happens based on common patterns elsewhere.
 
 Common patterns (infinite scroll, document-level scrolling, data-testid attributes) are useful priors but not guarantees. LinkedIn in particular has non-standard implementations of several standard UX patterns.
+
+---
+
+## Forward planning — 2026-03-22: Next iterations (not yet built)
+
+### Iteration 3: Speed optimisation — faster Load More without bot detection
+
+**The problem:** 535 connections at 1200ms per batch of ~10 takes roughly 60–90 seconds. The 1200ms wait is conservative — it was chosen to give LinkedIn's render pipeline enough time after a button click. Some of that wait is probably unnecessary.
+
+**What can be optimised:**
+- **Adaptive wait instead of fixed 1200ms.** Rather than waiting a fixed duration, poll the DOM every 100–200ms and proceed as soon as new cards appear. If cards appear in 400ms, don't wait the remaining 800ms. Cap at 2000ms as a safety timeout. This alone could cut total time by 30–50%.
+- **Collect during wait.** Currently we click, wait the full duration, then collect. We could start collecting as soon as the first new cards appear mid-wait, then click again immediately.
+- **Batch size awareness.** LinkedIn loads ~10 cards per click today. If that changes, the loop automatically adapts (Map deduplication handles any batch size).
+
+**Bot detection risk:**
+- Fixed timing is actually more bot-like than variable timing — real humans don't click at perfectly regular intervals
+- Adaptive wait with natural jitter (±100–200ms randomness) is both faster AND less detectable
+- Clicking the visible button (as opposed to XHR calls) is the most human-like action possible — low risk
+- Recommended approach: adaptive wait with jitter, not raw speed maximisation
+
+**What changes:** `scroll.ts` wait strategy — `scrollAndCollect` wait dep gets a smarter implementation in `index.ts`. The interface stays injectable and testable.
+
+---
+
+### Iteration 4: External database export — scope and risk assessment
+
+**The idea:** after collecting connections, push them to an external database (Airtable, Notion, Google Sheets, Supabase, etc.) rather than just downloading a CSV.
+
+**Why this is probably the right next question, not the right next build:**
+
+The CSV download is already usable. Anyone can import it into any database or CRM in two minutes. Building a direct integration means:
+- Choosing a specific database (which one? user's choice will vary)
+- Handling OAuth or API key configuration in the extension
+- Storing credentials somewhere (localStorage? chrome.storage?) — security surface
+- Managing API rate limits, schema mismatches, network failures
+- Maintaining the integration as both LinkedIn's DOM and the target API change
+
+**When it makes sense to build:**
+- You have a specific target database in mind and use it regularly
+- You are importing connections frequently enough that manual CSV import is genuinely painful
+- You are comfortable storing an API key in the extension
+
+**When it is overengineering:**
+- One-time or occasional export
+- The target database changes
+- Multiple users with different databases
+
+**Recommended path:** keep CSV as the primary output. Add a clearly-scoped v3 only if the specific database target is known and the import friction is measured as a real pain point.
+
+**If built, the right architecture:**
+- New `src/export/` module per integration (e.g. `src/export/sheets.ts`)
+- API key entered in the popup options page, stored in `chrome.storage.sync` (encrypted at rest by Chrome)
+- Export CSV first (as fallback), then attempt API push — never make the API the only output path
+- Each integration is optional and independently togglable
+
+---
+
+### Iteration 5: Chrome Web Store publication
+
+**What is required:**
+
+| Requirement | Current state | Gap |
+|-------------|--------------|-----|
+| MV3 manifest | ✓ done | — |
+| Privacy policy | ✗ not written | Required for extensions that access user data |
+| Store listing copy | ✗ not written | Name, description, screenshots, category |
+| Extension icons | ✗ not present | 16×16, 48×48, 128×128 PNG required |
+| Permissions justification | Partial | `activeTab` and `scripting` must be justified in the listing |
+| Review by Google | ✗ not submitted | Takes 1–3 business days |
+| Developer account | Unknown | $5 one-time fee if not already registered |
+
+**Permissions sensitivity:**
+`activeTab` and `scripting` are considered sensitive permissions. Google will ask for a written justification. The justification is straightforward: the extension reads the DOM of the active tab (LinkedIn connections page) only when the user explicitly clicks Export, and injects a content script only into that tab. No data leaves the user's machine except as a CSV file they control.
+
+**Recommended pre-publication steps:**
+1. Add 16×16, 48×48, 128×128 icons (`assets/` folder, referenced in `manifest.json`)
+2. Write a `PRIVACY_POLICY.md` — key points: no data collected, no network requests, CSV stays local, no analytics
+3. Draft store listing description
+4. Take screenshots of the popup and a sample CSV
+5. Run the Chrome extension linter: `npm install -g crx` or use the Web Store pre-review tool
+6. Submit for review
+
+**Risk:** Google may reject on first submission if the permissions justification is not detailed enough. This is common and fixable — rejection comes with specific feedback.
+
+**Scope note:** publication does not change any code. It is purely a packaging and submission task. The extension as built is already MV3-compliant and uses minimal permissions.
