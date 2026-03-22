@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "LinkedIn Connections Exporter",
+  "version": "1.0.0",
+  "description": "Export visible LinkedIn connections to CSV",
+  "permissions": ["activeTab", "scripting"],
+  "host_permissions": ["https://www.linkedin.com/*"],
+  "action": { "default_popup": "popup.html" },
+  "content_scripts": [{
+    "matches": [
+      "https://www.linkedin.com/mynetwork/invite-connect/connections/",
+      "https://www.linkedin.com/mynetwork/invite-connect/connections/*"
+    ],
+    "js": ["content.js"]
+  }]
+}
