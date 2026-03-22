@@ -28,7 +28,7 @@ npm run check       # lint + typecheck + test + build in sequence
 
 ### What the tests cover
 
-#### `tests/csv.test.ts`
+#### `tests/csv.test.ts` (5 tests)
 | Test | What it verifies |
 |------|-----------------|
 | builds CSV with header | Header row is `name,profileUrl,headline,connectedOn,messageUrl` |
@@ -37,60 +37,84 @@ npm run check       # lint + typecheck + test + build in sequence
 | formula injection `+` | `+malicious` → `\t+malicious` |
 | empty array | Only header row, no blank trailing rows |
 
-#### `tests/parser.test.ts`
+#### `tests/parser.test.ts` (12 tests)
 | Test | Fixture | What it verifies |
 |------|---------|-----------------|
-| parses at least one connection | connections-list-basic.html | Parser finds cards in the real list DOM |
-| first connection has name | connections-list-basic.html | Name is non-empty string |
-| first connection has profileUrl | connections-list-basic.html | URL contains `linkedin.com/in/` |
-| first connection has connectedOn | connections-list-basic.html | Text matches "Connected on" |
-| single card fixture graceful | connection-card-basic.html | No crash on card without lazy-column wrapper |
+| finds exactly one card | connection-card-basic.html | Wrapped fixture matches card selector |
+| extracts name | connection-card-basic.html | `"Siba Prasad"` exact match |
+| extracts profileUrl | connection-card-basic.html | Contains `linkedin.com/in/sibaps/` |
+| extracts headline | connection-card-basic.html | Contains `"Talent Acquisition Lead"` |
+| extracts connectedOn | connection-card-basic.html | `"Connected on March 19, 2026"` exact match |
+| extracts messageUrl | connection-card-basic.html | Contains `/messaging/compose/` |
+| finds multiple cards | connections-list-basic.html | Parser finds > 1 card in real list DOM |
+| every card has name | connections-list-basic.html | No empty names across all cards |
+| every card has profileUrl | connections-list-basic.html | All URLs contain `linkedin.com/in/` |
+| every card has connectedOn | connections-list-basic.html | All dates start with `"Connected on"` |
+| no null/undefined fields | connections-list-basic.html | Every field on every card is a string |
+| first card name matches fixture | connections-list-basic.html | `"Siba Prasad"` |
+
+#### `tests/scroll.test.ts` (10 tests)
+| Test | What it verifies |
+|------|-----------------|
+| returns pre-click cards when button absent | Initial collect before loop runs |
+| stops immediately when button absent | `triggerNextLoad` returns false → loop exits |
+| stops after 2 stable cycles | Button present but no new cards → stableChecks stop |
+| deduplicates by profileUrl across cycles | Map keyed by profileUrl, duplicates ignored |
+| resets stable counter on new cards | Growth resets stableChecks to 0 |
+| stops when button disappears mid-run | Button gone partway → clean exit |
+| onProgress called with cumulative count | Progress reflects total collected, not window size |
+| wait called with 1200ms | Correct wait duration per cycle |
+| handles empty page | Returns empty array, no crash |
+| simulates virtual list recycling | 20 unique connections collected across 10-card DOM windows |
 
 ### Fixtures
 | File | Purpose |
 |------|---------|
-| `tests/fixtures/connection-card-basic.html` | One sanitized card — tests parser resilience without list wrapper |
-| `tests/fixtures/connections-list-basic.html` | Real scraped list page — primary parser regression fixture |
+| `tests/fixtures/connection-card-basic.html` | Single card wrapped in lazy-column ancestry — single-card extraction tests |
+| `tests/fixtures/connections-list-basic.html` | Real scraped list — primary parser regression fixture |
+| `tests/fixtures/connections-load-more-button.html` | Load More button outerHTML — selector reference; confirms button has no stable attributes |
 
 ### Adding new fixtures
 When LinkedIn changes its DOM structure:
 1. Save a snippet of the new card HTML to `tests/fixtures/connection-card-vN.html`
 2. Add a `describe` block in `tests/parser.test.ts` loading the new fixture
 3. Assert specific field values (`name === 'Expected Name'`), not just `length > 0`
-4. Update `src/content/selectors.ts` to match the new class names or attributes
+4. Update `src/content/selectors.ts` to match new attributes — never add obfuscated class names
 
 ---
 
 ## Layer 2 — Manual Chrome unpacked validation
 
-### Build
+### Every time you rebuild
+
 ```
 npm run build
 ```
-This produces `dist/` containing `manifest.json`, `content.js`, `popup.js`, `popup.html`.
 
-### Load in Chrome
+Then in Chrome:
+1. Go to `chrome://extensions`
+2. Click **↺** (refresh) on the **LinkedIn Connections Exporter** card
+3. Go to your LinkedIn connections tab and press **Ctrl+R**
+
+> Step 3 is important — the old `content.js` stays in memory until the page reloads.
+
+### First install only
 1. Open `chrome://extensions`
 2. Enable **Developer mode** (toggle top-right)
 3. Click **Load unpacked** → select the `dist/` folder
-4. Confirm "LinkedIn Connections Exporter" appears with no errors
 
-### Smoke test on a fixture page (no LinkedIn login required)
-1. Open `tests/fixtures/connections-list-basic.html` as a local file in Chrome:
-   `File > Open File` → select `tests/fixtures/connections-list-basic.html`
-2. Note: the content script only runs on `https://www.linkedin.com/*` — it will **not** inject on a local file URL. This step only confirms the extension loads without crashing.
-
-### Full test on live LinkedIn
-1. Sign in to LinkedIn in Chrome.
+### Full export test on live LinkedIn
+1. Sign in to LinkedIn in Chrome
 2. Navigate to:
    ```
    https://www.linkedin.com/mynetwork/invite-connect/connections/
    ```
-3. **Scroll the page** until the connections you want are visible. LinkedIn renders lazily — only DOM-rendered cards are exported.
-4. Click the extension icon → popup opens with "Export Connections" button.
-5. Click **Export Connections**.
-6. Expected popup response: `Exported N connection(s).`
-7. A file `linkedin-connections.csv` downloads automatically.
+3. Click the extension icon → popup opens
+4. Click **Export Connections**
+5. The button disables and a progress bar appears
+6. Status updates: `Loading connections… 10 found` → `20 found` → ... climbing in batches
+7. When complete: `Exported N connection(s).`
+8. `linkedin-connections.csv` downloads automatically
 
 ### Verify the CSV
 Open the downloaded file in a text editor or spreadsheet app.
@@ -106,29 +130,48 @@ Siba Prasad,https://www.linkedin.com/in/sibaps/,"Talent Acquisition Lead || VLSI
 ```
 
 **Checks:**
-- [ ] Row count matches visible connections on the page
+- [ ] Row count matches your total LinkedIn connections
 - [ ] No `null` or `undefined` literals in any cell
 - [ ] Name and headline cells with commas are wrapped in double-quotes
 - [ ] Profile URLs open correct profiles when pasted in browser
 - [ ] `connectedOn` column shows "Connected on [Month Day, Year]"
-- [ ] No spreadsheet formula evaluation when opened in Excel/Sheets (cells starting with `=` should show a leading space/tab)
+- [ ] No spreadsheet formula evaluation (cells starting with `=` show a leading tab/space)
 
-### Diagnosing 0 results
-If the popup reports `Exported 0 connection(s)`:
-1. Open DevTools (F12) on the connections page → Console tab.
-2. Run: `document.querySelectorAll('[data-testid="lazy-column"] [data-display-contents="true"] > [componentkey]').length`
-3. If `0`: LinkedIn changed the list structure. Update `SELECTORS.CARD` in `src/content/selectors.ts`.
-4. Run: `document.querySelector('p[class*="b21f8722"]')` — if `null`, the name class changed. Update `SELECTORS.NAME`.
-5. Rebuild and reload the extension.
+### Selector health check (run in DevTools console before reporting a bug)
+
+```javascript
+// Are cards found?
+document.querySelectorAll('[data-testid="lazy-column"] [data-display-contents="true"] > [componentkey]').length
+
+// Is the Load More button present and findable?
+[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Load more')
+
+// Is the scroll container present?
+document.getElementById('workspace')
+```
+
+All three should return non-null/non-zero values. If any return null or 0, LinkedIn has changed its DOM and the corresponding selector in `src/content/selectors.ts` needs updating.
+
+### Diagnosing "Exported 0 connection(s)."
+1. Run the health check above — identify which selector broke
+2. Inspect the live DOM and find the new structure
+3. Update `src/content/selectors.ts` (never add obfuscated class names)
+4. `npm run build` → reload extension → Ctrl+R on connections page → retry
+
+### Diagnosing progress count stuck at 0
+The Load More button text changed or is not yet in the DOM.
+1. Run: `[...document.querySelectorAll('button')].map(b => b.textContent.trim())`
+2. Find the button that loads new connections
+3. Update `SELECTORS.LOAD_MORE_BUTTON_TEXT` in `src/content/selectors.ts`
 
 ---
 
 ## Known limitations
 
-| Limitation | Impact | Workaround |
-|-----------|--------|-----------|
-| Virtual list — only rendered cards exported | Incomplete exports | Scroll page fully before exporting |
-| Obfuscated class selectors | Breaks on LinkedIn deploys | Re-inspect DOM, update `selectors.ts` |
-| No auto-scroll or pagination | Manual effort for large lists | Scroll manually |
+| Limitation | Impact | Notes |
+|-----------|--------|-------|
+| `LOAD_MORE_BUTTON_TEXT` matched by text | Breaks if LinkedIn renames/translates button | Update `selectors.ts`; no code change needed |
+| `PROFILE_TEXT_LINK` uses `:not([style])` | Name/headline silently empty if LinkedIn adds style to text anchor | Monitor for 0-name exports |
+| 1200ms wait hardcoded | May be too slow on fast connections, too fast on slow ones | Acceptable for current use |
 | Message URL requires LinkedIn login | Dead link when not logged in | Export while logged in |
-| Formula-injection prefix is a tab char | Leading space visible in some apps | Expected behavior; protects against injection |
+| Formula-injection prefix is a tab char | Leading space visible in some apps | Expected; protects against injection |

@@ -530,3 +530,67 @@ Test count: 25 → 26.
 The "stops immediately when isEndOfList" test initially asserted `scrollToBottom` called 1 time. The code checks `isEndOfList()` *before* `scrollToBottom()` — so when the sentinel is already present, `scrollToBottom` is called 0 times. The test expectation was wrong; the code was correct. Fixed by updating the assertion and adding a comment explaining the loop order.
 
 This is the same pattern as the previous test bug: the loop structure requires careful tracing to write correct count assertions. Inline comments explaining the cycle-by-cycle trace are now the standard for this test file.
+
+---
+
+## Update — 2026-03-22: Load More button discovery — the scroll assumption was wrong
+
+### What the live test revealed
+
+After the virtual list fix (collect-while-scroll), the progress counter and CSV were consistent — but the count never climbed past the initially rendered batch. Programmatic scrolling was having no effect on card loading whatsoever.
+
+**Diagnosis process:**
+
+1. Found the real scroll container using a DevTools query for all scrollable elements — only one result: `<main id="workspace">`. This was not `document.scrollingElement`.
+2. Tested `document.getElementById('workspace').scrollTop = scrollHeight` in the console — the page visually jumped to the bottom (returned 3288) but **no new cards loaded**.
+3. The user reported: *"there's this Load more button — will actually trigger new connections to be added."*
+
+**Root cause: the fundamental loading mechanism was wrong.**
+
+LinkedIn's connections page does not use infinite scroll. It uses an explicit **"Load more" button**. No amount of programmatic scrolling — regardless of which element is targeted — will ever load new cards. The button must be clicked.
+
+This was an assumption failure. The initial design assumed infinite scroll because that is the dominant pattern for social media feeds. It was never verified against the actual page behavior before building the scroll loop.
+
+### What the button looks like
+
+The Load More button (`<button>`) has:
+- No `data-testid`
+- No `id`
+- No `aria-label`
+- Only obfuscated class names (change on every LinkedIn deploy)
+- Visible text content: `"Load more"` (stable)
+
+The only reliable selector is text content — the same pattern already used to detect `"Connected on"` dates. This is now a documented selector strategy: when no structural attribute exists, text content is the fallback, and the text string lives in `selectors.ts` as `LOAD_MORE_BUTTON_TEXT`.
+
+### The redesign
+
+`scrollToBottom` and `isEndOfList` deps were removed. Replaced with a single `triggerNextLoad(): boolean`:
+- Finds the button by text content
+- Clicks it
+- Returns `true` if found and clicked, `false` if button is absent
+
+Button absence is the natural end-of-list signal — LinkedIn removes the button when all connections are loaded. No separate sentinel selector needed.
+
+Wait time increased from 900ms to 1200ms: a button click triggers a network fetch + re-render, which is slower than a scroll event triggering a local virtual list update.
+
+### Live result
+
+535 connections exported in one click. Progress count climbed in batches of ~10. CSV contained all connections with correct fields. ✓
+
+### What this reveals about the design process
+
+**Verify the loading mechanism before building the loader.**
+
+The scroll loop was built and tested against mocks before anyone confirmed whether LinkedIn used scroll or a button to load more content. The mock tests passed perfectly. The implementation was correct for the wrong mechanism.
+
+The correct order: open DevTools → manually trigger "load more" → observe what happens in the DOM and Network tabs → THEN design the loader. One minute of DevTools observation would have revealed the button before a single line of scroll code was written.
+
+This is a specific instance of the broader principle: **fixtures and mocks validate logic, not assumptions**. The scroll loop logic was correct. The assumption that scroll was the right trigger was wrong. Tests cannot catch wrong assumptions about external systems — only human observation of the live system can.
+
+### Abstracted principle
+
+**When integrating with an external system you do not control, observe first — build second.**
+
+For any feature that depends on how an external page behaves (loading mechanism, scroll container, authentication flow), the first step is always manual observation in the real environment. Write down what you see. Then design the code to match what actually happens, not what you assume happens based on common patterns elsewhere.
+
+Common patterns (infinite scroll, document-level scrolling, data-testid attributes) are useful priors but not guarantees. LinkedIn in particular has non-standard implementations of several standard UX patterns.
