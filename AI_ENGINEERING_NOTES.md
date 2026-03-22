@@ -4,6 +4,62 @@ This file documents the first-pass build of the LinkedIn Connections Exporter ex
 
 ---
 
+## Human–AI collaboration map
+
+This section tracks which parts of the project required human input, which were fully AI-generated, and how the boundary between them might evolve. The goal is to make the collaboration visible so it can be reasoned about and gradually improved.
+
+### What the human supplied
+
+**The HTML fixtures.**
+Both fixture files — `tests/fixtures/connection-card-basic.html` and `tests/fixtures/connections-list-basic.html` — were provided directly by the human. The human navigated to their own LinkedIn connections page, captured the live DOM output, sanitised it, and placed the files in the repository.
+
+This was the single most critical human contribution to the project. Without real fixture HTML, the AI had no ground truth for:
+- which DOM elements actually exist on the page
+- what the class names, attributes, and nesting structure look like
+- what field values are realistic (name, headline, date format)
+
+The AI could not have produced these fixtures itself. LinkedIn is a closed, login-gated platform. The AI has no browser, no LinkedIn account, and no way to observe the live DOM. It can reason about what LinkedIn's markup *might* look like based on training data, but that knowledge is stale and partial. The fixtures are the bridge between AI reasoning and live reality.
+
+**The live validation run.**
+The human also performed the only live test of the extension — loading it unpacked in Chrome, navigating to their real connections page, and clicking Export. This produced the first real signal: 10 connections downloaded correctly, and the "Receiving end does not exist" error was discovered and reported. The AI cannot perform browser-based testing and depends entirely on the human for this feedback loop.
+
+**Scope and constraints.**
+The CLAUDE.md and REVIEW.md files that defined the v1 scope, architecture constraints, and done criteria were human-authored. The AI built within those boundaries but did not set them.
+
+### What the AI supplied
+
+- All TypeScript source code (`src/`)
+- All test logic (`tests/`)
+- Build configuration, manifest, popup HTML
+- Selector strategy and parser design (informed by the human-provided fixtures)
+- Documentation: TESTING.md, STATUS.md, AI_ENGINEERING_NOTES.md, LINKEDIN_EXPORT_HOWTO.md
+- CI workflow, hook scripts
+- Identification of the double-registration problem and the idempotency fix
+
+### Where the boundary is fragile today
+
+| Dependency | Why it requires the human today | Risk if not maintained |
+|-----------|--------------------------------|----------------------|
+| Fixtures | LinkedIn DOM is login-gated and changes without notice | Selectors break silently; tests stay green against stale HTML |
+| Live validation | No automated browser test against real LinkedIn | Regressions only discovered by manual use |
+| Fixture updates | When LinkedIn ships a new frontend, someone must re-capture the DOM | AI cannot self-update fixtures; tests diverge from reality |
+
+### How this boundary could evolve
+
+**Near term — human-assisted fixture refresh.**
+When LinkedIn updates its DOM and exports break, the workflow is: human captures a new page snippet → saves to `tests/fixtures/` → AI updates selectors and tests. This is already the intended maintenance path; it just needs to be practiced.
+
+**Medium term — semi-automated fixture capture.**
+A browser automation script (Playwright, Puppeteer) run by a logged-in human could capture a fresh fixture on demand and write it to `tests/fixtures/connections-list-basic.html`. The human still needs to trigger it and be logged in, but the DOM capture and file write are automated. The AI could author this script.
+
+**Longer term — snapshot-diff alerting.**
+A scheduled run of the capture script could diff the new fixture against the committed one and open a GitHub issue if the structure has changed. The human is notified rather than having to discover it through a broken export. The AI could author both the script and the issue template.
+
+**What cannot be automated away.**
+LinkedIn authentication will always require a human. Any fixture-capture pipeline depends on a logged-in session. This is a hard dependency that cannot be engineered around without storing credentials — which is outside the v1 scope and a deliberate security boundary.
+
+---
+
 ## What Claude got right immediately
 
 **Selector isolation.**
