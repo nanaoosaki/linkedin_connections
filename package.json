@@ -7,7 +7,8 @@
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "build": "node esbuild.config.mjs",
-    "check": "npm run lint && npm run typecheck && npm test && npm run build"
+    "check": "npm run lint && npm run typecheck && npm test && npm run build",
+    "pack": "npm run build && node scripts/pack.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.268",
@@ -20,6 +21,7 @@
     "jest": "^29.7.0",
     "jest-environment-jsdom": "^29.7.0",
     "jsdom": "^24.0.0",
+    "sharp": "^0.34.5",
     "ts-jest": "^29.1.2",
     "typescript": "^5.3.3"
   }

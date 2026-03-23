@@ -11,7 +11,7 @@ A Manifest V3 Chrome extension that exports all your LinkedIn connections to a C
 - Downloads a clean `linkedin-connections.csv` to your machine — no data leaves your browser
 - Shows a live progress bar while loading (`X / total` when LinkedIn's count is available)
 
-Tested with 535 connections (~40 seconds end-to-end).
+Tested with 535 connections in ~30 seconds on a fast connection. Timing scales with your internet speed — each "Load more" click fires a network request to LinkedIn's servers, so slower connections will take proportionally longer. The adaptive wait means the extension never idles longer than necessary: it moves to the next page as soon as new cards appear in the DOM rather than waiting a fixed delay.
 
 ---
 
@@ -26,36 +26,55 @@ Fields: `name`, `profileUrl`, `headline`, `connectedOn`, `messageUrl`
 
 ---
 
-## Install (unpacked — no Web Store required)
+## Install
+
+There are two ways to install — from the pre-built release (no Node.js required) or from source (for developers who want to inspect or modify the code).
+
+---
+
+### Option A — Pre-built release (recommended for most users)
+
+1. Go to the [Releases page](https://github.com/nanaoosaki/linkedin_connections/releases)
+2. Download `linkedin-connections-exporter.zip` from the latest release
+3. Unzip it — you'll get a folder containing `manifest.json`, `content.js`, `popup.js`, `popup.html`, and the icon files
+4. Open `chrome://extensions` in Chrome
+5. Enable **Developer mode** (top-right toggle)
+6. Click **Load unpacked** and select the unzipped folder
+7. Pin the extension icon from the puzzle-piece menu
+
+> **Want to verify what you're installing?** The zip is built directly from the source in this repo using `npm run pack`. You can audit every line of `src/` before building it yourself (see Option B).
+
+---
+
+### Option B — Build from source
 
 **Prerequisites:** Node.js 18+, Chrome
-
-### 1. Build
 
 ```bash
 git clone https://github.com/nanaoosaki/linkedin_connections.git
 cd linkedin_connections
 npm install
-npm run build
+npm run build        # produces dist/ — the extension folder
 ```
 
-This produces a `dist/` folder — that is the extension.
+To also produce the installable zip:
 
-### 2. Load in Chrome
+```bash
+npm run pack         # runs build, then zips dist/ → linkedin-connections-exporter.zip
+```
 
-1. Open `chrome://extensions`
-2. Enable **Developer mode** (top-right toggle)
-3. Click **Load unpacked** and select the `dist/` folder
-4. Pin the extension icon from the puzzle-piece menu
+Then load `dist/` as an unpacked extension (same steps 4–7 above).
 
-### 3. Export
+> After any rebuild, go to `chrome://extensions` and click the refresh icon on the extension card.
+
+---
+
+### Using the extension
 
 1. Go to `https://www.linkedin.com/mynetwork/invite-connect/connections/`
-2. Click the extension icon
+2. Click the extension icon in the toolbar
 3. Click **Export Connections**
-4. Wait for the progress bar to complete — `linkedin-connections.csv` downloads automatically
-
-> After rebuilding, go to `chrome://extensions` and click the refresh icon on the extension card.
+4. The progress bar shows `X / total` connections loaded — `linkedin-connections.csv` downloads automatically when complete
 
 ---
 
@@ -149,7 +168,7 @@ Open an issue with the output and I'll update the selector.
 
 - LinkedIn DOM selectors may break when LinkedIn deploys updates — particularly obfuscated class names (none are used here, but structural attributes can also change)
 - The `CONNECTIONS_TOTAL` selector for the determinate progress bar needs live validation per LinkedIn account/locale
-- No Chrome Web Store listing yet — must be loaded unpacked
+- Chrome Web Store submission pending — can be loaded unpacked in the meantime (see Install above)
 
 ---
 

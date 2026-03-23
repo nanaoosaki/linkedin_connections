@@ -23,6 +23,9 @@ await esbuild.build({
 
 // Copy static files
 copyFileSync('manifest.json', 'dist/manifest.json');
-copyFileSync('popup.html', 'dist/popup.html');
+copyFileSync('popup.html',    'dist/popup.html');
+copyFileSync('assets/icon-16.png',  'dist/icon-16.png');
+copyFileSync('assets/icon-48.png',  'dist/icon-48.png');
+copyFileSync('assets/icon-128.png', 'dist/icon-128.png');
 
 console.log('Build complete.');
